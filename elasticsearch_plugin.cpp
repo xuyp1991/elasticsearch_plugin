@@ -95,9 +95,9 @@ public:
 
    void upsert_account(
          std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
-         const chain::action& act, const chain::block_timestamp_type& block_time );
-   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now,
-         const chain::block_timestamp_type& block_time );
+         const chain::action& act/*, const chain::block_timestamp_type& block_time */);
+   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now/*,
+         const chain::block_timestamp_type& block_time */);
    void update_account_auth( fc::mutable_variant_object& param_doc, const chain::updateauth& update, std::chrono::milliseconds& now );
    void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
@@ -109,6 +109,10 @@ public:
 
    void init();
    void delete_index();
+
+   void insert_default_abi();
+   bool b_insert_default_abi = true;
+   bool b_use_system01 = false;
 
    template<typename Queue, typename Entry> void queue(Queue& queue, const Entry& e);
 
@@ -324,8 +328,8 @@ void elasticsearch_plugin_impl::applied_transaction( const chain::transaction_tr
       //
       // It is recommended to run elasticsearch_plugin in read-mode = read-only.
       //
-      if( !t->producer_block_id.valid() )
-         return;
+      //if( !t->producer_block_id.valid() )
+      //   return;
       // always queue since account information always gathered
       queue( transaction_trace_queue, t );
    } catch (fc::exception& e) {
@@ -426,15 +430,15 @@ void elasticsearch_plugin_impl::process_accepted_block( chain::block_state_ptr b
 }
 
 void elasticsearch_plugin_impl::create_new_account(
-   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now,
-   const chain::block_timestamp_type& block_time )
+   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now/*,
+   const chain::block_timestamp_type& block_time*/ )
 {
    fc::variants pub_keys;
    fc::variants account_controls;
 
    param_doc("name", newacc.name.to_string());
    param_doc("creator", newacc.creator.to_string());
-   param_doc("account_create_time", block_time);
+  // param_doc("account_create_time", block_time);
    param_doc("createAt", now.count());
 
    for( const auto& account : newacc.owner.accounts ) {
@@ -516,7 +520,7 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
 
 void elasticsearch_plugin_impl::upsert_account(
       std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
-      const chain::action& act, const chain::block_timestamp_type& block_time )
+      const chain::action& act/*, const chain::block_timestamp_type& block_time */)
 {
    if (act.account != chain::config::system_account_name)
       return;
@@ -532,7 +536,7 @@ void elasticsearch_plugin_impl::upsert_account(
       if( act.name == newaccount ) {
          auto newacc = act.data_as<chain::newaccount>();
 
-         create_new_account(param_doc, newacc, now, block_time);
+         create_new_account(param_doc, newacc, now/*, block_time*/);
          account_id = newacc.name.value;
          upsert_script =
             "ctx._source.name = params[\"%1%\"].name;"
@@ -597,7 +601,7 @@ void elasticsearch_plugin_impl::upsert_account(
 }
 
 void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction_trace_ptr t ) {
-
+   elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
    std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
    std::vector<std::pair<uint64_t, std::reference_wrapper<chain::base_action_trace>>> base_action_traces; // without inline action traces
 
@@ -614,7 +618,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
          stack.pop();
 
          if( executed && atrace.receipt.receiver == chain::config::system_account_name ) {
-            upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
+            upsert_account( account_upsert_actions, atrace.act/*, atrace.block_time*/ );
          }
 
          if( start_block_reached && store_action_traces
@@ -630,50 +634,76 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
       }
    }
 
-   if ( !account_upsert_actions.empty() ) {
+//    if ( !account_upsert_actions.empty() ) {
 
-      auto f =  [ account_upsert_actions{std::move(account_upsert_actions)}, this ]()
-      {
-         elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
-         for( auto& action : account_upsert_actions ) {
+//       auto f =  [ account_upsert_actions{std::move(account_upsert_actions)}, this ]()
+//       {
+         
+//          for( auto& action : account_upsert_actions ) {
 
-            fc::mutable_variant_object source_doc;
-            fc::mutable_variant_object script_doc;
+//             fc::mutable_variant_object source_doc;
+//             fc::mutable_variant_object script_doc;
 
-            script_doc("lang", "painless");
-            script_doc("source", action.second.first);
-            script_doc("params", action.second.second);
+//             script_doc("lang", "painless");
+//             script_doc("source", action.second.first);
+//             script_doc("params", action.second.second);
 
-            source_doc("scripted_upsert", true);
-            source_doc("upsert", fc::variant_object());
-            source_doc("script", script_doc);
+//             source_doc("scripted_upsert", true);
+//             source_doc("upsert", fc::variant_object());
+//             source_doc("script", script_doc);
 
-            auto id = std::to_string(action.first);
-            auto json = fc::json::to_string(source_doc);
+//             auto id = std::to_string(action.first);
+//             auto json = fc::json::to_string(source_doc);
 
-            bulk_account_upserts.updateDocument("_doc", id, json);
-         }
+//             bulk_account_upserts.updateDocument("_doc", id, json);
+//          }
 
-         try {
-            es_client->bulk_perform(bulk_account_upserts);
-         } catch( ... ) {
-            handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
-         }
-      };
+//          try {
+//             es_client->bulk_perform(bulk_account_upserts);
+//          } catch( ... ) {
+//             handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
+//          }
+//       };
 
-      upsert_account_task_queue.emplace( std::move(f) );
+//       upsert_account_task_queue.emplace( std::move(f) );
 
-      check_task_queue_size();
-      thread_pool->enqueue(
-         [ this ]()
-         {
-            boost::mutex::scoped_lock guard(upsert_account_task_mtx);
-            std::function<void()> task = std::move( upsert_account_task_queue.front() );
-            task();
-            upsert_account_task_queue.pop();
-         }
-      );
+//       check_task_queue_size();
+//       thread_pool->enqueue(
+//          [ this ]()
+//          {
+//             boost::mutex::scoped_lock guard(upsert_account_task_mtx);
+//             std::function<void()> task = std::move( upsert_account_task_queue.front() );
+//             task();
+//             upsert_account_task_queue.pop();
+//          }
+//       );
 
+//    }
+   for( auto& action : account_upsert_actions ) {
+
+      fc::mutable_variant_object source_doc;
+      fc::mutable_variant_object script_doc;
+
+      script_doc("lang", "painless");
+      script_doc("source", action.second.first);
+      script_doc("params", action.second.second);
+
+      source_doc("scripted_upsert", true);
+      source_doc("upsert", fc::variant_object());
+      source_doc("script", script_doc);
+
+      auto id = std::to_string(action.first);
+      auto json = fc::json::to_string(source_doc);
+
+      bulk_account_upserts.updateDocument("_doc", id, json);
+   }
+
+   if ( !bulk_account_upserts.empty() ) {
+      try {
+         es_client->bulk_perform(bulk_account_upserts);
+      } catch( ... ) {
+         handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
+      }
    }
 
    if( base_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
@@ -779,6 +809,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
 
          auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
          auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
+          //  ilog("xuyp add for get json ${json}",("json",json));
 
          bulker& bulk = bulk_pool->get();
          bulk.append_document(std::move(action), std::move(json));
@@ -1011,6 +1042,176 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
    );
 }
 
+extern chain::private_key_type get_private_key( name keyname, string role ) ;
+
+extern chain::public_key_type  get_public_key( name keyname, string role ) ;
+
+void elasticsearch_plugin_impl::insert_default_abi()
+{
+
+   
+   if(!b_insert_default_abi) return ;
+   //eosio.token
+   { 
+   std::string upsert_script;
+   uint64_t account_id;  
+   std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;  
+   elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);    
+   account_name name_account = N(eosio.token);
+   chain::newaccount newacc{
+      .creator  = N(eosio),
+      .name     = name_account,
+      .owner    = authority( get_public_key( name_account, "owner" ) ),
+      .active   = authority( get_public_key( name_account, "active" ) )
+      };
+   std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
+   fc::mutable_variant_object param_doc;
+
+   create_new_account(param_doc, newacc, now);
+   account_id = newacc.name.value;
+   upsert_script =
+      "ctx._source.name = params[\"0\"].name;"
+      "ctx._source.creator = params[\"0\"].creator;"
+      "ctx._source.account_create_time = params[\"0\"].account_create_time;"
+      "ctx._source.pub_keys = params[\"0\"].pub_keys;"
+      "ctx._source.account_controls = params[\"0\"].account_controls;"
+      "ctx._source.createAt = params[\"0\"].createAt;";
+      //新建用户
+      {
+         auto idx = "0";
+         //auto script = boost::str(boost::format(upsert_script) % idx);
+         account_upsert_actions.emplace(
+            account_id,
+            std::pair<std::string, fc::mutable_variant_object>(upsert_script, fc::mutable_variant_object(idx, param_doc)));
+      }
+      //添加合约
+      fc::mutable_variant_object param_doc_abi;
+      auto abiPath = app().config_dir() / "eosio.token" += ".abi";
+      FC_ASSERT( fc::exists( abiPath ), "no abi file found ");
+      auto abijson = fc::json::from_file(abiPath).as<abi_def>();
+      auto abi = fc::raw::pack(abijson);
+      abi_def abi_def = fc::raw::unpack<chain::abi_def>( abi );
+
+      abi_deserializer->upsert_abi_cache( name_account, abi_def );
+      param_doc_abi("name", "eosio.token");
+      param_doc_abi("abi", abi_def);
+      param_doc_abi("updateAt", now.count());
+      upsert_script =
+            "ctx._source.name = params[\"1\"].name;"
+            "ctx._source.abi = params[\"1\"].abi;"
+            "ctx._source.updateAt = params[\"1\"].updateAt;";
+      auto it = account_upsert_actions.find(account_id);
+      if ( it != account_upsert_actions.end() ) {
+            auto idx = std::to_string(it->second.second.size());
+           // auto script = boost::str(boost::format(upsert_script) % idx);
+            it->second.first.append(upsert_script);
+            it->second.second.operator()(idx, param_doc_abi);
+      }     
+   
+
+      for( auto& action : account_upsert_actions ) {
+
+      fc::mutable_variant_object source_doc;
+      fc::mutable_variant_object script_doc;
+
+      script_doc("lang", "painless");
+      script_doc("source", action.second.first);
+      script_doc("params", action.second.second);
+
+      source_doc("scripted_upsert", true);
+      source_doc("upsert", fc::variant_object());
+      source_doc("script", script_doc);
+
+      auto id = std::to_string(action.first);
+      auto json = fc::json::to_string(source_doc);
+
+      bulk_account_upserts.updateDocument("_doc", id, json);
+      ilog("xuyp add for add newabi id:${id},json:${json}",("id",id)("json",json));
+      ilog("xuyp add for add newabi body:${body}",("body",bulk_account_upserts.body()));
+      
+      }
+
+      if ( !bulk_account_upserts.empty() ) {
+            try {
+            es_client->bulk_perform(bulk_account_upserts);
+            } catch( ... ) {
+            handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
+            }
+      }
+   }
+   //eosio
+   {
+      std::string upsert_script;
+      uint64_t account_id;  
+      std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;  
+      elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
+
+         account_name name_account = N(eosio);
+         std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
+         fc::path abiPath;
+         if(b_use_system01)
+         { abiPath = app().config_dir() / "System01" += ".abi"; }
+         else
+         { abiPath = app().config_dir() / "System" += ".abi"; }
+         
+         FC_ASSERT( fc::exists( abiPath ), "no abi file found ");
+         auto abijson = fc::json::from_file(abiPath).as<abi_def>();
+         auto abi = fc::raw::pack(abijson);
+         abi_def abi_def = fc::raw::unpack<chain::abi_def>( abi );
+         const string json_str = fc::json::to_string( abi_def );
+
+         abi_deserializer->upsert_abi_cache( name_account, abi_def );
+         fc::mutable_variant_object param_doc_abi; 
+         param_doc_abi("name", "eosio");
+         param_doc_abi("abi", abi_def);
+         param_doc_abi("updateAt", now.count());
+         upsert_script =
+            "ctx._source.name = params[\"0\"].name;"
+            "ctx._source.abi = params[\"0\"].abi;"
+            "ctx._source.updateAt = params[\"0\"].updateAt;";
+         auto idx = "0";
+         //auto script = boost::str(boost::format(upsert_script) % idx);
+         account_upsert_actions.emplace(
+            account_id,
+            std::pair<std::string, fc::mutable_variant_object>(upsert_script, fc::mutable_variant_object(idx, param_doc_abi)));
+      
+      for( auto& action : account_upsert_actions ) {
+
+      fc::mutable_variant_object source_doc;
+      fc::mutable_variant_object script_doc;
+
+      script_doc("lang", "painless");
+      script_doc("source", action.second.first);
+      script_doc("params", action.second.second);
+
+      source_doc("scripted_upsert", true);
+      source_doc("upsert", fc::variant_object());
+      source_doc("script", script_doc);
+
+      auto id = std::to_string(action.first);
+      auto json = fc::json::to_string(source_doc);
+
+      bulk_account_upserts.updateDocument("_doc", id, json);
+      ilog("xuyp add for add newabi id:${id},json:${json}",("id",id)("json",json));
+      ilog("xuyp add for add newabi body:${body}",("body",bulk_account_upserts.body()));
+      
+      }
+
+      if ( !bulk_account_upserts.empty() ) {
+            try {
+            es_client->bulk_perform(bulk_account_upserts);
+            } catch( ... ) {
+            handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
+            }
+      }
+   }
+
+   b_insert_default_abi = false;   
+
+}
+
 void elasticsearch_plugin_impl::check_task_queue_size() {
    auto task_queue_size = thread_pool->queue_size();
    if ( task_queue_size > max_task_queue_size ) {
@@ -1170,7 +1371,7 @@ void elasticsearch_plugin_impl::init() {
          handle_elasticsearch_exception( "create system account " + json, __LINE__ );
       }
    }
-
+      insert_default_abi();
    ilog("starting elasticsearch plugin thread");
    consume_thread = boost::thread([this] { consume_blocks(); });
 
@@ -1231,13 +1432,19 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                                  " --elastic-index-wipe will remove EOS index from elasticsearch." );
             }
          }
-         if( options.count( "abi-serializer-max-time-ms" )) {
-            uint32_t max_time = options.at( "abi-serializer-max-time-ms" ).as<uint32_t>();
-            EOS_ASSERT(max_time > chain::config::default_abi_serializer_max_time_ms,
-                       chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
-            fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
-            my->abi_deserializer.reset( new deserializer( abi_serializer_max_time ));
+      //    if( options.count( "abi-serializer-max-time-ms" )) {
+      //       uint32_t max_time = options.at( "abi-serializer-max-time-ms" ).as<uint32_t>();
+      //       EOS_ASSERT(max_time > chain::config::default_abi_serializer_max_time_ms,
+      //                  chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
+      //       fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
+      //       my->abi_deserializer.reset( new deserializer( abi_serializer_max_time ));
+      //    }
+
+         if( options.count( "abi-serializer-max-time-ms") == 0 ) {
+            EOS_ASSERT(false, chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
          }
+         fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
+         my->abi_deserializer.reset( new deserializer( abi_serializer_max_time ));
 
          if( options.count( "elastic-queue-size" )) {
             my->max_queue_size = options.at( "elastic-queue-size" ).as<uint32_t>();
@@ -1306,7 +1513,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          my->max_task_queue_size = my->max_queue_size * 8;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
+         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024/* * 1024*/,
                               std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller

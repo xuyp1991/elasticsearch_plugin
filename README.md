@@ -1,8 +1,10 @@
 # elasticsearch_plugin
 
+fork from [EOSLaoMao elasticsearch_plugin](https://github.com/EOSLaoMao/elasticsearch_plugin)
+
 Nodeos plugin for archiving blockchain data into Elasticsearch, inspired by [mongo_db_plugin](https://github.com/EOSIO/eos/tree/master/plugins/mongo_db_plugin).
 
-**Currently the plugin only work with [official eosio repository](https://github.com/EOSIO/eos).**
+**Currently the plugin only work with [official eosforce repository](https://github.com/eosforce/eosforce).**
 
 ## Benchmark
 
