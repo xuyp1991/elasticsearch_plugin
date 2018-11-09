@@ -102,6 +102,9 @@ public:
    void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
 
+   void process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity,const string str_end);
+   std::string handle_quantity(const string str_json,const string str_quantity,const string str_end);
+
    /// @return true if act should be added to elasticsearch, false to skip it
    bool filter_include( const account_name& receiver, const action_name& act_name,
                         const vector<chain::permission_level>& authorization ) const;
@@ -170,6 +173,8 @@ public:
    static const std::string block_states_index;
    static const std::string trans_traces_index;
    static const std::string action_traces_index;
+   static const std::string transfer_action_index;
+   static const std::string vote_action_index;
 };
 
 const action_name elasticsearch_plugin_impl::newaccount = chain::newaccount::get_name();
@@ -185,6 +190,8 @@ const std::string elasticsearch_plugin_impl::trans_index = "transactions";
 const std::string elasticsearch_plugin_impl::block_states_index = "block_states";
 const std::string elasticsearch_plugin_impl::trans_traces_index = "transaction_traces";
 const std::string elasticsearch_plugin_impl::action_traces_index = "action_traces";
+const std::string elasticsearch_plugin_impl::transfer_action_index = "transfer_action";
+const std::string elasticsearch_plugin_impl::vote_action_index = "vote_action";
 
 bool elasticsearch_plugin_impl::filter_include( const account_name& receiver, const action_name& act_name,
                                            const vector<chain::permission_level>& authorization ) const
@@ -518,6 +525,41 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
    param_doc("updateAt", now.count());
 }
 
+std::string elasticsearch_plugin_impl::handle_quantity(const string str_json,const string str_quantity,const string str_end)
+{
+      //const std::string str_quantity = std::string("\"quantity\":");
+      int pos_quantity = str_json.find(str_quantity),len_str_quantity = str_quantity.length();
+      if(pos_quantity == -1) return str_json;
+      int pos_quantity_end = str_json.find(str_end,pos_quantity + len_str_quantity);
+       const std::string str_value = str_json.substr(pos_quantity + len_str_quantity + 1,pos_quantity_end - pos_quantity - len_str_quantity - 2);
+      int pos_whitespace = str_value.find(" ");
+      std::string str_amount = str_value.substr(0,pos_whitespace);
+      std::string str_symbol = str_value.substr(pos_whitespace + 1,str_value.length() - pos_whitespace);
+      std::string str_before = str_json.substr(0,pos_quantity + len_str_quantity);
+      std::string str_after = str_json.substr(pos_quantity_end,str_json.length() - pos_quantity_end);
+      std::string str_result = str_before + std::string("{\"amount\":") + str_amount + std::string(",\"symbol\":\"") + str_symbol + std::string("\"}") +str_after;
+      return str_result;
+}
+
+void elasticsearch_plugin_impl::process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity,const string str_end)
+{
+      fc::mutable_variant_object action_traces_doc;
+      fc::from_variant( abi_deserializer->to_variant_with_abi( act ), action_traces_doc );
+      action_traces_doc("createAt", now.count());
+
+
+      fc::mutable_variant_object action_doc;
+      action_doc("_index", str_index);
+      action_doc("_type", "_doc");
+      action_doc("retry_on_conflict", 100);
+
+      auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
+      auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
+      auto str_json = fc::prune_invalid_utf8(handle_quantity(json,str_quantity,str_end));
+      bulker& bulk = bulk_pool->get();
+      bulk.append_document(std::move(action), std::move(str_json));
+}
+
 void elasticsearch_plugin_impl::upsert_account(
       std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
       const chain::action& act/*, const chain::block_timestamp_type& block_time */)
@@ -577,7 +619,16 @@ void elasticsearch_plugin_impl::upsert_account(
             "ctx._source.name = params[\"%1%\"].name;"
             "ctx._source.abi = params[\"%1%\"].abi;"
             "ctx._source.updateAt = params[\"%1%\"].updateAt;";
+      } else if(act.name == N(vote)){
+            const string str_end = std::string("}");
+            const std::string str_stake = std::string("\"stake\":");
+         process_transfer_action(act,now,vote_action_index,str_stake,str_end);
+      } else if(act.name == N(transfer)){
+            const string str_end = std::string(",");
+         const std::string str_quantity = std::string("\"quantity\":");
+         process_transfer_action(act,now,transfer_action_index,str_quantity,str_end);
       }
+
 
       if ( !upsert_script.empty() ) {
          auto it = account_upsert_actions.find(account_id);
@@ -626,6 +677,8 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             base_action_traces.emplace_back(std::make_pair(action_count, std::ref(atrace)));
          }
          action_count++;
+
+
 
          auto &inline_traces = atrace.inline_traces;
          for( auto it = inline_traces.rbegin(); it != inline_traces.rend(); ++it ) {
@@ -732,7 +785,6 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
 
             auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
             auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
-
             bulker& bulk = bulk_pool->get();
             bulk.append_document(std::move(action), std::move(json));
          }
@@ -809,8 +861,6 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
 
          auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
          auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
-          //  ilog("xuyp add for get json ${json}",("json",json));
-
          bulker& bulk = bulk_pool->get();
          bulk.append_document(std::move(action), std::move(json));
       }
@@ -1127,8 +1177,6 @@ void elasticsearch_plugin_impl::insert_default_abi()
       auto json = fc::json::to_string(source_doc);
 
       bulk_account_upserts.updateDocument("_doc", id, json);
-      ilog("xuyp add for add newabi id:${id},json:${json}",("id",id)("json",json));
-      ilog("xuyp add for add newabi body:${body}",("body",bulk_account_upserts.body()));
       
       }
 
@@ -1194,8 +1242,6 @@ void elasticsearch_plugin_impl::insert_default_abi()
       auto json = fc::json::to_string(source_doc);
 
       bulk_account_upserts.updateDocument("_doc", id, json);
-      ilog("xuyp add for add newabi id:${id},json:${json}",("id",id)("json",json));
-      ilog("xuyp add for add newabi body:${body}",("body",bulk_account_upserts.body()));
       
       }
 
@@ -1343,6 +1389,7 @@ void elasticsearch_plugin_impl::delete_index() {
    es_client->delete_index( block_states_index );
    es_client->delete_index( trans_traces_index );
    es_client->delete_index( action_traces_index );
+   es_client->delete_index( transfer_action_index );
 }
 
 void elasticsearch_plugin_impl::init() {
@@ -1353,6 +1400,8 @@ void elasticsearch_plugin_impl::init() {
    es_client->init_index( block_states_index, block_states_mapping );
    es_client->init_index( trans_traces_index, trans_traces_mapping );
    es_client->init_index( action_traces_index, action_traces_mapping );
+   es_client->init_index( transfer_action_index, transfer_action_mapping );
+   es_client->init_index( vote_action_index, vote_action_mapping );
 
    if (es_client->count_doc(accounts_index) == 0) {
       auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
