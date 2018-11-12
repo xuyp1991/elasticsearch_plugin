@@ -102,8 +102,8 @@ public:
    void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
 
-   void process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity,const string str_end);
-   std::string handle_quantity(const string str_json,const string str_quantity,const string str_end);
+   void process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity);
+   std::string handle_quantity(const string str_json,const string str_quantity);
 
    /// @return true if act should be added to elasticsearch, false to skip it
    bool filter_include( const account_name& receiver, const action_name& act_name,
@@ -525,28 +525,25 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
    param_doc("updateAt", now.count());
 }
 
-std::string elasticsearch_plugin_impl::handle_quantity(const string str_json,const string str_quantity,const string str_end)
+std::string elasticsearch_plugin_impl::handle_quantity(const string str_json,const string str_quantity)
 {
-      //const std::string str_quantity = std::string("\"quantity\":");
       int pos_quantity = str_json.find(str_quantity),len_str_quantity = str_quantity.length();
       if(pos_quantity == -1) return str_json;
-      int pos_quantity_end = str_json.find(str_end,pos_quantity + len_str_quantity);
-       const std::string str_value = str_json.substr(pos_quantity + len_str_quantity + 1,pos_quantity_end - pos_quantity - len_str_quantity - 2);
-      int pos_whitespace = str_value.find(" ");
-      std::string str_amount = str_value.substr(0,pos_whitespace);
-      std::string str_symbol = str_value.substr(pos_whitespace + 1,str_value.length() - pos_whitespace);
-      std::string str_before = str_json.substr(0,pos_quantity + len_str_quantity);
-      std::string str_after = str_json.substr(pos_quantity_end,str_json.length() - pos_quantity_end);
+      int pos_whitespace = str_quantity.find(" ");
+      std::string str_amount = str_quantity.substr(0,pos_whitespace);
+      std::string str_symbol = str_quantity.substr(pos_whitespace + 1,str_quantity.length() - pos_whitespace);
+      std::string str_before = str_json.substr(0,pos_quantity - 1);
+      std::string str_after = str_json.substr(pos_quantity + len_str_quantity + 1,str_json.length() - len_str_quantity - pos_quantity - 1);
       std::string str_result = str_before + std::string("{\"amount\":") + str_amount + std::string(",\"symbol\":\"") + str_symbol + std::string("\"}") +str_after;
       return str_result;
 }
 
-void elasticsearch_plugin_impl::process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity,const string str_end)
+void elasticsearch_plugin_impl::process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity)
 {
       fc::mutable_variant_object action_traces_doc;
       fc::from_variant( abi_deserializer->to_variant_with_abi( act ), action_traces_doc );
       action_traces_doc("createAt", now.count());
-
+      auto asset_value = action_traces_doc["data"][str_quantity.c_str()].as_string();;
 
       fc::mutable_variant_object action_doc;
       action_doc("_index", str_index);
@@ -555,7 +552,7 @@ void elasticsearch_plugin_impl::process_transfer_action(const chain::action& act
 
       auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
       auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
-      auto str_json = fc::prune_invalid_utf8(handle_quantity(json,str_quantity,str_end));
+      auto str_json = fc::prune_invalid_utf8(handle_quantity(json,asset_value));
       bulker& bulk = bulk_pool->get();
       bulk.append_document(std::move(action), std::move(str_json));
 }
@@ -564,9 +561,9 @@ void elasticsearch_plugin_impl::upsert_account(
       std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
       const chain::action& act/*, const chain::block_timestamp_type& block_time */)
 {
+   
    if (act.account != chain::config::system_account_name)
       return;
-
    std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
 
@@ -620,13 +617,11 @@ void elasticsearch_plugin_impl::upsert_account(
             "ctx._source.abi = params[\"%1%\"].abi;"
             "ctx._source.updateAt = params[\"%1%\"].updateAt;";
       } else if(act.name == N(vote)){
-            const string str_end = std::string("}");
-            const std::string str_stake = std::string("\"stake\":");
-         process_transfer_action(act,now,vote_action_index,str_stake,str_end);
+            const std::string str_stake = std::string("stake");
+         process_transfer_action(act,now,vote_action_index,str_stake);
       } else if(act.name == N(transfer)){
-            const string str_end = std::string(",");
-         const std::string str_quantity = std::string("\"quantity\":");
-         process_transfer_action(act,now,transfer_action_index,str_quantity,str_end);
+         const std::string str_quantity = std::string("quantity");
+         process_transfer_action(act,now,transfer_action_index,str_quantity);
       }
 
 
@@ -1562,7 +1557,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          my->max_task_queue_size = my->max_queue_size * 8;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024/* * 1024*/,
+         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
                               std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
