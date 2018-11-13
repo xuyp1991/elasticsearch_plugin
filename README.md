@@ -145,3 +145,6 @@ Config Options for eosio::elasticsearch_plugin.
 
 - [ ] Due to `libcurl` [100-continue feature](https://curl.haxx.se/mail/lib-2017-07/0013.html), consider replace [EOSLaoMao/elasticlient](https://github.com/EOSLaoMao/elasticlient) with other simple http client like [https://cpp-netlib.org/#](https://cpp-netlib.org/#)
 - [ ] Currently, the plugin will cache all abi information in the RAM. It's not a issue for now. Maybe it is better to embed some LRU cache library in the feature.
+
+## NOTE
+[EosForceReadme](./EosForceReadme.md)Describes the detailed steps for installing and using and examples of drawing images.And it is a Chinese edited document
