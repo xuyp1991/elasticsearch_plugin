@@ -1306,7 +1306,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          my->max_task_queue_size = my->max_queue_size * 8;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
+         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 256,
                               std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
