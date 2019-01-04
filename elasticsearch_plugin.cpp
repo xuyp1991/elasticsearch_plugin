@@ -1079,18 +1079,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                   if( !filter_include( trx ) ) continue;
                   const auto& id = trx.id();
                   trx_id_str = id.str();
-                  std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
-                  for (auto &act: trx.actions)
-                  {
-                     if(act.name == N(vote)){
-                        const std::string str_stake = std::string("stake");
-                        process_transfer_action(act,now,vote_action_index,str_stake);
-                     } else if(act.name == N(transfer)){
-                        const std::string str_quantity = std::string("quantity");
-                        process_transfer_action(act,now,transfer_action_index,str_quantity);
-                     }
-                  }
+                  
                //for (const auto &act : temptrx.action)
                } else {
                   const auto& id = receipt.trx.get<transaction_id_type>();
