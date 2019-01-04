@@ -616,13 +616,14 @@ void elasticsearch_plugin_impl::upsert_account(
             "ctx._source.name = params[\"%1%\"].name;"
             "ctx._source.abi = params[\"%1%\"].abi;"
             "ctx._source.updateAt = params[\"%1%\"].updateAt;";
-      } else if(act.name == N(vote)){
-            const std::string str_stake = std::string("stake");
-         process_transfer_action(act,now,vote_action_index,str_stake);
-      } else if(act.name == N(transfer)){
-         const std::string str_quantity = std::string("quantity");
-         process_transfer_action(act,now,transfer_action_index,str_quantity);
       }
+      // } else if(act.name == N(vote)){
+      //       const std::string str_stake = std::string("stake");
+      //    process_transfer_action(act,now,vote_action_index,str_stake);
+      // } else if(act.name == N(transfer)){
+      //    const std::string str_quantity = std::string("quantity");
+      //    process_transfer_action(act,now,transfer_action_index,str_quantity);
+      // }
 
 
       if ( !upsert_script.empty() ) {
@@ -663,6 +664,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
          auto &atrace = stack.top().get();
          stack.pop();
 
+         
          if( executed && atrace.receipt.receiver == chain::config::system_account_name ) {
             upsert_account( account_upsert_actions, atrace.act/*, atrace.block_time*/ );
          }
@@ -1042,6 +1044,29 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
             bulk.append_document(std::move(action), std::move(json));
          }
 
+         if(true) {
+             for( const auto& receipt : bs->block->transactions ) {
+                if( receipt.trx.contains<packed_transaction>() ) {
+                   const auto& pt = receipt.trx.get<packed_transaction>();
+                  // get id via get_raw_transaction() as packed_transaction.id() mutates internal transaction state
+                  const auto& raw = pt.get_raw_transaction();
+                  const auto& trx = fc::raw::unpack<transaction>( raw );
+                   std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
+                  for (auto &act: trx.actions)
+                  {
+                     if(act.name == N(vote)){
+                        const std::string str_stake = std::string("stake");
+                        process_transfer_action(act,now,vote_action_index,str_stake);
+                     } else if(act.name == N(transfer)){
+                        const std::string str_quantity = std::string("quantity");
+                        process_transfer_action(act,now,transfer_action_index,str_quantity);
+                     }
+                  }
+                }
+             }
+         }
+
          if( store_transactions ) {
 
             for( const auto& receipt : bs->block->transactions ) {
@@ -1054,6 +1079,19 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                   if( !filter_include( trx ) ) continue;
                   const auto& id = trx.id();
                   trx_id_str = id.str();
+                  std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
+                  for (auto &act: trx.actions)
+                  {
+                     if(act.name == N(vote)){
+                        const std::string str_stake = std::string("stake");
+                        process_transfer_action(act,now,vote_action_index,str_stake);
+                     } else if(act.name == N(transfer)){
+                        const std::string str_quantity = std::string("quantity");
+                        process_transfer_action(act,now,transfer_action_index,str_quantity);
+                     }
+                  }
+               //for (const auto &act : temptrx.action)
                } else {
                   const auto& id = receipt.trx.get<transaction_id_type>();
                   trx_id_str = id.str();
@@ -1081,6 +1119,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
 
                bulker& bulk = bulk_pool->get();
                bulk.append_document(std::move(action), std::move(json));
+
             }
          }
       }
@@ -1197,7 +1236,7 @@ void elasticsearch_plugin_impl::insert_default_abi()
          if(b_use_system01)
          { abiPath = app().config_dir() / "System01" += ".abi"; }
          else
-         { abiPath = app().config_dir() / "System" += ".abi"; }
+         { abiPath = app().config_dir() / "System02" += ".abi"; }
          
          FC_ASSERT( fc::exists( abiPath ), "no abi file found ");
          auto abijson = fc::json::from_file(abiPath).as<abi_def>();
@@ -1557,7 +1596,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          my->max_task_queue_size = my->max_queue_size * 8;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 256,
+         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
                               std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
