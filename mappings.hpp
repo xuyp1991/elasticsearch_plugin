@@ -649,6 +649,15 @@ static const std::string vote_action_mapping = R"(
                 "createAt": {
                     "type": "date"
                 }
+                "trx_id": {
+                    "type": "text",
+                    "fields": {
+                        "keyword": {
+                            "type": "keyword",
+                            "ignore_above": 256
+                        }
+                    }
+                }
             }
         }
     }
@@ -735,6 +744,15 @@ static const std::string transfer_action_mapping = R"(
                 },
                 "createAt": {
                     "type": "date"
+                }
+                "trx_id": {
+                    "type": "text",
+                    "fields": {
+                        "keyword": {
+                            "type": "keyword",
+                            "ignore_above": 256
+                        }
+                    }
                 }
             }
         }

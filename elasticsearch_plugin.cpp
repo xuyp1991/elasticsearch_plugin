@@ -102,7 +102,7 @@ public:
    void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
 
-   void process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity);
+   void process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity,const string trx_id);
    std::string handle_quantity(const string str_json,const string str_quantity);
 
    /// @return true if act should be added to elasticsearch, false to skip it
@@ -132,6 +132,7 @@ public:
    bool store_transactions = true;
    bool store_transaction_traces = true;
    bool store_action_traces = true;
+   bool store_tranfer_action = true;
 
    std::unique_ptr<elastic_client> es_client;
    std::unique_ptr<deserializer> abi_deserializer;
@@ -538,11 +539,12 @@ std::string elasticsearch_plugin_impl::handle_quantity(const string str_json,con
       return str_result;
 }
 
-void elasticsearch_plugin_impl::process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity)
+void elasticsearch_plugin_impl::process_transfer_action(const chain::action& act, std::chrono::milliseconds& now,const std::string str_index,const string str_quantity,const string trx_id)
 {
       fc::mutable_variant_object action_traces_doc;
       fc::from_variant( abi_deserializer->to_variant_with_abi( act ), action_traces_doc );
       action_traces_doc("createAt", now.count());
+      action_traces_doc("trx_id", trx_id);
       auto asset_value = action_traces_doc["data"][str_quantity.c_str()].as_string();;
 
       fc::mutable_variant_object action_doc;
@@ -1044,7 +1046,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
             bulk.append_document(std::move(action), std::move(json));
          }
 
-         if(true) {
+         if(store_tranfer_action) {
              for( const auto& receipt : bs->block->transactions ) {
                 if( receipt.trx.contains<packed_transaction>() ) {
                    const auto& pt = receipt.trx.get<packed_transaction>();
@@ -1053,14 +1055,17 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                   const auto& trx = fc::raw::unpack<transaction>( raw );
                    std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
                      std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
+                  string trx_id_str;
+                  const auto& id = trx.id();
+                  trx_id_str = id.str();
                   for (auto &act: trx.actions)
                   {
                      if(act.name == N(vote)){
                         const std::string str_stake = std::string("stake");
-                        process_transfer_action(act,now,vote_action_index,str_stake);
+                        process_transfer_action(act,now,vote_action_index,str_stake,trx_id_str);
                      } else if(act.name == N(transfer)){
                         const std::string str_quantity = std::string("quantity");
-                        process_transfer_action(act,now,transfer_action_index,str_quantity);
+                        process_transfer_action(act,now,transfer_action_index,str_quantity,trx_id_str);
                      }
                   }
                 }
@@ -1482,6 +1487,8 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "Enables storing transaction traces in elasticsearch.")
          ("elastic-store-action-traces", bpo::value<bool>()->default_value(true),
           "Enables storing action traces in elasticsearch.")
+          ("elastic-store-transfer-action", bpo::value<bool>()->default_value(true),
+          "Enables storing transfer and vote action in elasticsearch.")
          ("elastic-filter-on", bpo::value<vector<string>>()->composing(),
           "Track actions which match receiver:action:actor. Receiver, Action, & Actor may be blank to include all. i.e. eosio:: or :transfer:  Use * or leave unspecified to include all.")
          ("elastic-filter-out", bpo::value<vector<string>>()->composing(),
@@ -1539,6 +1546,10 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          if( options.count( "elastic-store-action-traces" )) {
             my->store_action_traces = options.at( "elastic-store-action-traces" ).as<bool>();
          }
+         if( options.count( "elastic-store-transfer-action" )) {
+            my->store_tranfer_action = options.at( "elastic-store-transfer-action" ).as<bool>();
+         }
+
         if( options.count( "elastic-filter-on" )) {
             auto fo = options.at( "elastic-filter-on" ).as<vector<string>>();
             my->filter_on_star = false;
